@@ -1,12 +1,10 @@
 extern crate ovisbp;
 
-use ovisbp::*;
-
-struct MyLevel {
-    name: String,
+pub struct MyLevel {
+    pub name: String,
 }
 
-impl Level for MyLevel {
+impl ovisbp::Level for MyLevel {
     fn width(&self) -> usize {
         1
     }
@@ -15,7 +13,7 @@ impl Level for MyLevel {
         1
     }
 
-    fn field(&self, x: usize, y: usize) -> Option<&Field> {
+    fn field(&self, x: usize, y: usize) -> Option<&ovisbp::Field> {
         None
     }
 
@@ -41,7 +39,7 @@ impl Level for MyLevel {
 }
 
 impl MyLevel {
-    fn new(name: &str) -> MyLevel {
+    pub fn new(name: &str) -> MyLevel {
         MyLevel{name: name.to_string()}
     }
 }
