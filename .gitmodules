@@ -1,0 +1,3 @@
+[submodule "src/ovisbp"]
+	path = src/ovisbp
+	url = https://github.com/lanice/ovisbp
