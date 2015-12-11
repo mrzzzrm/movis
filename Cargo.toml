@@ -1,0 +1,19 @@
+[package]
+name = "movis"
+version = "0.1.0"
+authors = ["mrzzzrm <mrzesn@t-online.de>"]
+
+[lib]
+name = "lib"
+path = "src/lib.rs"
+
+[[bin]]
+name="movis"
+path="src/main.rs"
+
+# [dependencies.ovisbp]
+# path="src/ovisbp"
+# version="*"
+
+[dependencies]
+ovisbp={git="https://github.com/lanice/ovisbp"}
