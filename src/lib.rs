@@ -2,6 +2,9 @@ extern crate ovisbp;
 extern crate tiled;
 extern crate sdl2;
 extern crate sdl2_image;
+extern crate glm;
+extern crate stopwatch;
+extern crate time;
 
 use std::path::Path;
 use std::fs::File;
@@ -9,17 +12,28 @@ use self::sdl2_image::LoadTexture;
 use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use self::glm::*;
+use self::stopwatch::*;
+use self::time::Duration;
+use self::ovisbp::*;
+
+pub struct Rect {
+    pub pos: Vector2<f32>,
+    pub size: Vector2<f32>
+}
 
 pub struct Game<'a> {
     pub player: Player,
-    pub level: Level,
+    pub level: MovisLevel,
     pub scale: f32,
     pub sdl: sdl2::Sdl,
     pub renderer: sdl2::render::Renderer<'a>,
     pub event_pump: sdl2::EventPump,
+    pub frame_stopwatch: Stopwatch,
+    pub frame_seconds: f32
 }
 
-pub struct Level {
+pub struct MovisLevel {
     pub num_columns: u32,
     pub num_rows: u32,
     pub tiles: Vec<u32>,
@@ -27,12 +41,12 @@ pub struct Level {
 }
 
 pub struct Player {
-    pub x: f32,
-    pub y: f32,
-    pub cell_x: i32,
-    pub cell_y: i32,
-    pub velocity_x: f32,
-    pub velocity_y: f32,
+    pub pos: Vector2<f32>,
+    pub velocity: Vector2<f32>,
+    pub on_ground: bool,
+    pub jumping: bool,
+    pub jump_start_y: f32,
+    pub collision_box: Rect,
     pub texture: sdl2::render::Texture,
 }
 
@@ -45,6 +59,12 @@ pub struct Tileset {
     pub tile_height: u32,
     pub spacing: u32,
     pub margin: u32,
+}
+
+impl Rect {
+    pub fn new(x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect{pos: vec2(x, y), size: vec2(w, h)}
+    }
 }
 
 impl<'a> Game<'a> {
@@ -66,10 +86,9 @@ impl<'a> Game<'a> {
         let mut renderer = window.renderer().build().unwrap();
 
         /*
-            Level
+            MovisLevel
         */
-
-        let level = Level::new(&renderer);
+        let level = MovisLevel::new(&renderer);
 
         /*
             Player
@@ -86,7 +105,7 @@ impl<'a> Game<'a> {
         let mut player_texture = renderer.render_target().unwrap().reset().unwrap().unwrap();
         player_texture.set_blend_mode(sdl2::render::BlendMode::Blend);
 
-        let player = Player::new(10.0, 250.0, player_texture);
+        let player = Player::new(0.0, 5.0, player_texture);
 
         let event_pump = sdl.event_pump().unwrap();
 
@@ -104,27 +123,44 @@ impl<'a> Game<'a> {
             scale: 3.0,
             sdl: sdl,
             renderer: renderer,
-            event_pump: event_pump
+            event_pump: event_pump,
+            frame_stopwatch: Stopwatch::start_new(),
+            frame_seconds: 0.0
         }
     }
 
     pub fn update(&mut self) -> bool {
         /*
+            Frame timing
+        */
+        self.frame_stopwatch.stop();
+        self.frame_seconds = self.frame_stopwatch.elapsed().num_microseconds().unwrap() as f32 / 1000000.0;
+        self.frame_stopwatch.restart();
+
+
+        /*
             Input
         */
         for event in self.event_pump.poll_iter() {
             match event {
-                Event::KeyDown { keycode: Some(Keycode::Left), .. } => {
+                Event::KeyDown { keycode: Some(Keycode::Left), repeat: false, .. } => {
                     self.player.go_left(true);
                 }
-                Event::KeyUp { keycode: Some(Keycode::Left), .. } => {
+                Event::KeyUp { keycode: Some(Keycode::Left), repeat: false, .. } => {
                     self.player.go_left(false);
                 }
-                Event::KeyDown { keycode: Some(Keycode::Right), .. } => {
+                Event::KeyDown { keycode: Some(Keycode::Right), repeat: false, .. } => {
                     self.player.go_right(true);
                 }
-                Event::KeyUp { keycode: Some(Keycode::Right), .. } => {
+                Event::KeyUp { keycode: Some(Keycode::Right), repeat: false, .. } => {
                     self.player.go_right(false);
+                }
+                Event::KeyDown { keycode: Some(Keycode::Space), repeat: false, .. } => {
+                    self.player.jump(true);
+                }
+                Event::KeyUp { keycode: Some(Keycode::Space), repeat: false, .. } => {
+                    self.player.jump(false);
+                    println!("Not jumpsing anymorez");
                 }
 
                 Event::Quit {..} => {
@@ -137,7 +173,7 @@ impl<'a> Game<'a> {
         /*
 
         */
-        self.player.update();
+        self.player.update(&self.level, self.frame_seconds, self.scale);
 
         /*
             Draw
@@ -147,14 +183,13 @@ impl<'a> Game<'a> {
         for r in 0..self.level.num_rows {
             for c in 0..self.level.num_columns {
                 self.level.tileset.draw_tile(&mut self.renderer,
-                                self.level.tiles[(r * self.level.num_columns + c) as usize],
+                                self.level.gid_at(c, r),
                                 (c as f32 * self.level.tileset.tile_width as f32 * self.scale) as i32,
                                 (r as f32 * self.level.tileset.tile_height as f32 * self.scale) as i32,
                                 self.scale as u32);
             }
         }
 
-        self.player.update();
         self.player.draw(&mut self.renderer, self.scale);
 
         self.renderer.present();
@@ -184,7 +219,7 @@ impl Tileset {
     }
 }
 
-impl ovisbp::Level for Level {
+impl Level for MovisLevel {
     fn width(&self) -> usize {
         1
     }
@@ -210,7 +245,7 @@ impl ovisbp::Level for Level {
     }
 
     fn jump_height(&self, _: f32) -> f32 {
-        0.0
+        2.5
     }
 
     fn player_velocity(&self) -> f32 {
@@ -218,8 +253,8 @@ impl ovisbp::Level for Level {
     }
 }
 
-impl Level {
-    pub fn new(renderer: &sdl2::render::Renderer) -> Level {
+impl MovisLevel {
+    pub fn new(renderer: &sdl2::render::Renderer) -> MovisLevel {
         let file = File::open(&Path::new("data/map.tmx")).unwrap();
         let map = tiled::parse(file).unwrap();
         let mut tileset = None;
@@ -259,22 +294,26 @@ impl Level {
             }
         }
 
-        Level{num_columns: map.width,
+        MovisLevel{num_columns: map.width,
                 num_rows: map.height,
                 tiles: tiles,
                 tileset:tileset.unwrap()}
+    }
+
+    pub fn gid_at(&self, c: u32, r: u32) -> u32 {
+        self.tiles[(r * self.num_columns + c) as usize]
     }
 }
 
 impl Player {
     pub fn new(x: f32, y: f32, texture: sdl2::render::Texture) -> Player {
         Player {
-            x: x,
-            y: y,
-            cell_x: 0,
-            cell_y: 0,
-            velocity_x: 0.0,
-            velocity_y: 0.0,
+            pos: vec2(x, y),
+            velocity: vec2(0.0, 0.0),
+            on_ground: false,
+            jumping: false,
+            jump_start_y: 0.0,
+            collision_box: Rect::new(0.0, 0.0, 0.0, 0.0),
             texture: texture,
         }
     }
@@ -284,21 +323,122 @@ impl Player {
 
         let dstw = (16 as f32 * scale) as u32;
         let dsth = (32 as f32 * scale) as u32;
-        let dst = sdl2::rect::Rect::new(self.x as i32, self.y as i32, dstw, dsth).unwrap();
+        let dst = sdl2::rect::Rect::new(self.pos.x as i32, self.pos.y as i32, dstw, dsth).unwrap();
 
         renderer.copy(&self.texture, src, dst);
     }
 
     pub fn go_left(&mut self, val: bool) {
-        if val { self.velocity_x = -0.1; } else { self.velocity_x = 0.0; }
+        if val { self.velocity.x = -3.5; } else { self.velocity.x = 0.0; }
     }
 
     pub fn go_right(&mut self, val: bool) {
-        if val { self.velocity_x = 0.1; } else { self.velocity_x = 0.0; }
+        if val { self.velocity.x = 3.5; } else { self.velocity.x = 0.0; }
     }
 
-    pub fn update(&mut self) {
-        self.x += self.velocity_x;
-        self.y += self.velocity_y;
+    pub fn jump(&mut self, val: bool) {
+        if val && self.on_ground {
+            self.jumping = true;
+            self.jump_start_y = self.pos.y;
+        }
+        else {
+            self.jumping = false;
+        }
+    }
+
+    pub fn update(&mut self, level: &MovisLevel, seconds: f32, scale: f32) {
+        /*
+            Apply gravity/Jumping
+        */
+
+        if self.jumping {
+            if self.pos.y < self.jump_start_y - (level.jump_height(0.0) * level.tileset.tile_height as f32 * scale) {
+                self.jumping = false;
+            }
+        }
+
+        if self.jumping {
+            self.velocity.y = -5.0;
+        }
+        else {
+            self.velocity.y = 5.0;
+        }
+
+        /*
+            Move
+        */
+        self.collision_box.pos = self.pos;
+        self.collision_box.size.x = scale * self.texture.query().width as f32;
+        self.collision_box.size.y = scale * self.texture.query().height as f32;
+
+        let step = vec2(self.velocity.x * level.tileset.tile_width as f32, self.velocity.y * level.tileset.tile_height as f32) * scale * seconds;
+
+        self.move_axis(level, scale, step.x, 0);
+        self.move_axis(level, scale, step.y, 1);
+
+        let stopped = self.move_axis(level, scale, -1.0, 1);
+        if stopped {
+            self.jumping = false;
+        }
+        else {
+            self.move_axis(level, scale, 1.0, 1);
+        }
+
+        let stopped = self.move_axis(level, scale, 1.0, 1);
+        if stopped {
+            if !self.on_ground {
+                self.jumping = false;
+            }
+            self.on_ground = true;
+        }
+        else {
+            self.on_ground = false;
+            self.move_axis(level, scale, -1.0, 1);
+        }
+
+        self.pos = self.collision_box.pos;
+    }
+
+    fn move_axis(&mut self, level: &MovisLevel, scale: f32, mut axis_step: f32, axis: usize) -> bool {
+        while axis_step != 0.0 {
+            let mut s = axis_step.signum();
+            if axis_step.abs() < 1.0 {
+                s = axis_step;
+            }
+            axis_step -= s;
+
+            self.collision_box.pos[axis] += s;
+
+            if self.collides(level, scale) {
+                self.collision_box.pos[axis] -= s;
+                assert!(!self.collides(level, scale));
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn collides(&self, level: &MovisLevel, scale: f32) -> bool {
+        let div = vec2(level.tileset.tile_width as f32, level.tileset.tile_height as f32) * scale;
+        let upper_left_tile = to_ivec2(self.collision_box.pos / div);
+        let lower_right_tile = to_ivec2((self.collision_box.pos + self.collision_box.size) / div);
+
+        for x in upper_left_tile.x..(lower_right_tile.x + 1) {
+            for y in upper_left_tile.y..(lower_right_tile.y + 1) {
+                if x < 0 || y < 0 {
+                    continue;
+                }
+                if x >= level.num_columns as i32 || y >= level.num_rows as i32 {
+                    continue;
+                }
+
+                if level.gid_at(x as u32, y as u32) != 0 {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
